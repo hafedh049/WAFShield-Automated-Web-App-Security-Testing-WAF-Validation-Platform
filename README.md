@@ -196,7 +196,7 @@ Distributed under the **MIT License**. See `LICENSE` for more information.
 
 ## 📬 Contact
 
-**Hafedh Guenichi** — [your.email@example.com](mailto:hafedhgunichi@gmail.com)  
+**Hafedh Guenichi** — [hafedhgunichi@gmail.com](mailto:hafedhgunichi@gmail.com)  
 Project Link: [https://github.com/hafedh049/WAFShield](https://github.com/hafedh049/WAFShield)
 
 ---

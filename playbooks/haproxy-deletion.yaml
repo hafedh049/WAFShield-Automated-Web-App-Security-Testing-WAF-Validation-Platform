@@ -1,0 +1,49 @@
+---
+- name: Uninstall HAProxy + Keepalived and cleanup configs
+  hosts: all
+  gather_facts: true
+
+  tasks:
+    - block:
+        - name: Stop HAProxy
+          service:
+            name: haproxy
+            state: stopped
+            enabled: false
+
+        - name: Stop Keepalived
+          service:
+            name: keepalived
+            state: stopped
+            enabled: false
+
+        - name: Remove HAProxy package
+          package:
+            name: haproxy
+            state: absent
+
+        - name: Remove Keepalived package
+          package:
+            name: keepalived
+            state: absent
+
+        - name: Remove HAProxy config file
+          file:
+            path: /etc/haproxy/haproxy.cfg
+            state: absent
+
+        - name: Remove HAProxy certs directory
+          file:
+            path: /etc/haproxy/certs
+            state: absent
+            recurse: true
+
+        - name: Remove Keepalived config file
+          file:
+            path: /etc/keepalived/keepalived.conf
+            state: absent
+
+        - name: Remove VIP from interface (if exists)
+          command: ip addr del 192.168.74.254/24 dev ens33
+          ignore_errors: true
+      when: inventory_hostname in ['ELB-I', 'ELB-II']

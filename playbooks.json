@@ -1,0 +1,16 @@
+[
+  {
+    "deletion": "self-signed-cert-deletion.yaml",
+    "installation": "self-signed-cert-installation.yaml",
+    "name": "Self Signed Certification",
+    "execute_deletion": true,
+    "execute_installation": true
+  },
+  {
+    "deletion": "haproxy-deletion.yaml",
+    "installation": "haproxy-installation.yaml",
+    "name": "Ha-Proxy",
+    "execute_deletion": true,
+    "execute_installation": true
+  }
+]

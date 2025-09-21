@@ -1,0 +1,56 @@
+[
+    {
+        "name": "Control-Plane",
+        "path": "D:/Virtual Machines/Control-Plane\\Control-Plane.vmx",
+        "ip": "192.168.74.146",
+        "state": "start"
+    },
+    {
+        "name": "ELB-I",
+        "path": "D:/Virtual Machines/ELB-I\\ELB-I.vmx",
+        "ip": "192.168.74.147",
+        "state": "start"
+    },
+    {
+        "name": "ELB-II",
+        "path": "D:/Virtual Machines/ELB-II\\ELB-II.vmx",
+        "ip": "192.168.74.148",
+        "state": "start"
+    },
+    {
+        "name": "WAF-I",
+        "path": "D:/Virtual Machines/WAF-I\\WAF-I.vmx",
+        "ip": "192.168.74.149",
+        "state": "start"
+    },
+    {
+        "name": "WAF-II",
+        "path": "D:/Virtual Machines/WAF-II\\WAF-II.vmx",
+        "ip": "192.168.74.150",
+        "state": "start"
+    },
+    {
+        "name": "ILB-I",
+        "path": "D:/Virtual Machines/ILB-I\\ILB-I.vmx",
+        "ip": "192.168.74.151",
+        "state": "start"
+    },
+    {
+        "name": "SRV-I",
+        "path": "D:/Virtual Machines/SRV-I\\SRV-I.vmx",
+        "ip": "192.168.74.152",
+        "state": "start"
+    },
+    {
+        "name": "SRV-II",
+        "path": "D:/Virtual Machines/SRV-II\\SRV-II.vmx",
+        "ip": "192.168.74.153",
+        "state": "start"
+    },
+    {
+        "name": "Bastion",
+        "path": "D:/Virtual Machines/Bastion\\Bastion.vmx",
+        "ip": "192.168.74.154",
+        "state": "start"
+    }
+]

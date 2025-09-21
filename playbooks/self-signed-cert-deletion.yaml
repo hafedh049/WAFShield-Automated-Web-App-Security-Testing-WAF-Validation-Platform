@@ -1,0 +1,43 @@
+---
+- name: Delete SSL Certificate and Key from Ansible Master
+  hosts: localhost
+  become: true
+  vars:
+    ssl_cert_path: /etc/ssl/certs/iso.crt
+    ssl_key_path: /etc/ssl/private/iso.key
+
+  tasks:
+    - name: Remove SSL certificate
+      file:
+        path: "{{ ssl_cert_path }}"
+        state: absent
+
+    - name: Remove SSL private key
+      file:
+        path: "{{ ssl_key_path }}"
+        state: absent
+
+- name: Delete SSL Certificate and Combined PEM from HAProxy
+  hosts: ELB-I, ELB-II
+  become: true
+  vars:
+    haproxy_cert_dir: /etc/haproxy/certs
+    haproxy_cert: "{{ haproxy_cert_dir }}/iso.crt"
+    haproxy_key: "{{ haproxy_cert_dir }}/iso.key"
+    haproxy_combined_cert: "{{ haproxy_cert_dir }}/iso.pem"
+
+  tasks:
+    - name: Remove HAProxy certificate
+      file:
+        path: "{{ haproxy_cert }}"
+        state: absent
+
+    - name: Remove HAProxy private key
+      file:
+        path: "{{ haproxy_key }}"
+        state: absent
+
+    - name: Remove combined HAProxy PEM
+      file:
+        path: "{{ haproxy_combined_cert }}"
+        state: absent

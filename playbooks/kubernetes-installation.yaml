@@ -1,0 +1,247 @@
+---
+# Playbook: install k8s with kubeadm, install calico, join other control-planes and workers
+# - Clones repo on all nodes
+# - Runs setup-container.sh and setup-kubetools.sh on all nodes
+# - Runs kubeadm init on the first control-plane host
+# - Extracts the join commands from kubeadm init output and uses them to join
+#   - other control-plane hosts as control-plane nodes
+#   - worker nodes as workers
+#
+# Inventory assumptions:
+# [control_plane]  # contains CP1, CP2, CP3 (CP1 is the first member)
+# [workers]        # contains worker nodes
+#
+# Variables you can override:
+# pod_network_cidr: 192.168.0.0/16   # Calico default CIDR
+# repo_url: https://github.com/sandervanvugt/cka
+# repo_dir: ~/cka
+
+- name: Install kubeadm cluster and join CPs/workers
+  hosts: all
+  become: true
+  vars:
+    repo_url: "https://github.com/sandervanvugt/cka"
+    repo_dir: "{{ ansible_env.HOME }}/cka"
+    pod_network_cidr: "192.168.0.0/16"
+    kubeconfig_owner: "{{ ansible_env.SUDO_USER | default(ansible_env.USER) }}"
+    kubeconfig_home: "{{ (kubeconfig_owner == 'root') | ternary('/root', '/home/' + kubeconfig_owner) }}"
+  tasks:
+    - name: Ensure git is installed
+      package:
+        name: git
+        state: present
+
+    - name: Clone SanderVanVugt Repo (if missing)
+      git:
+        repo: "{{ repo_url }}"
+        dest: "{{ repo_dir }}"
+        update: yes
+
+    - name: Make setup scripts executable
+      file:
+        path: "{{ repo_dir }}/setup-container.sh"
+        mode: "0755"
+
+    - name: Make kubetools setup executable
+      file:
+        path: "{{ repo_dir }}/setup-kubetools.sh"
+        mode: "0755"
+
+    - name: Run setup-container.sh (install CRI) # runs on all hosts
+      command: "sudo {{ repo_dir }}/setup-container.sh"
+      args:
+        chdir: "{{ repo_dir }}"
+      register: setup_container
+      changed_when: "'already' not in setup_container.stdout.lower()"
+      failed_when: setup_container.rc != 0 and "already" not in setup_container.stdout.lower()
+
+    - name: Run setup-kubetools.sh (install kubeadm/kubectl/kubelet) # runs on all hosts
+      command: "sudo {{ repo_dir }}/setup-kubetools.sh"
+      args:
+        chdir: "{{ repo_dir }}"
+      register: setup_kubetools
+      changed_when: "'already' not in setup_kubetools.stdout.lower()"
+      failed_when: setup_kubetools.rc != 0 and "already" not in setup_kubetools.stdout.lower()
+
+  # The following block runs only on the first control-plane host (CP1)
+- name: Initialize control plane on CP1
+  hosts: CP1 # first host in control_plane group
+  become: true
+  vars:
+    repo_dir: "{{ ansible_env.HOME }}/cka"
+    pod_network_cidr: "192.168.0.0/16"
+    kubeconfig_owner: "{{ ansible_env.SUDO_USER | default(ansible_env.USER) }}"
+    kubeconfig_home: "{{ (kubeconfig_owner == 'root') | ternary('/root', '/home/' + kubeconfig_owner) }}"
+  tasks:
+    - name: Ensure kubeadm/kubelet/kubectl are available
+      command: kubeadm version
+      register: kubeadm_v
+      changed_when: false
+      failed_when: kubeadm_v.rc != 0
+
+    - name: Run kubeadm init on CP1 (with upload-certs)
+      # Using --upload-certs so we can join other control-plane nodes with certificate key
+      command: >
+        kubeadm init
+        --apiserver-advertise-address={{ ansible_default_ipv4.address }}
+        --pod-network-cidr={{ pod_network_cidr }}
+        --upload-certs
+      register: kubeadm_init
+      changed_when: "'initialized' in kubeadm_init.stdout.lower() or kubeadm_init.rc == 0"
+      failed_when: kubeadm_init.rc != 0
+
+    - name: Parse kubeadm init stdout for control-plane join command
+      set_fact:
+        cp_join_cmd: "{{ (kubeadm_init.stdout_lines | select('search','kubeadm join') | list)[0] | default('') }}"
+
+    - name: Parse kubeadm init stdout for worker join command (without --control-plane)
+      set_fact:
+        worker_join_cmd: >-
+          {{ (kubeadm_init.stdout_lines | select('search','kubeadm join') | list)
+             | map('regex_replace','\\s+--control-plane.*$','') 
+             | list
+             | first | default('') }}
+
+    - name: Create kube config dir for user
+      file:
+        path: "{{ kubeconfig_home }}/.kube"
+        state: directory
+        mode: "0700"
+        owner: "{{ kubeconfig_owner }}"
+        group: "{{ kubeconfig_owner }}"
+
+    - name: Copy admin.conf to user's kube config
+      copy:
+        src: /etc/kubernetes/admin.conf
+        dest: "{{ kubeconfig_home }}/.kube/config"
+        owner: "{{ kubeconfig_owner }}"
+        group: "{{ kubeconfig_owner }}"
+        mode: "0600"
+
+    - name: Set KUBECONFIG env file (for subsequent tasks)
+      copy:
+        dest: /tmp/kubeconfig_for_playbook
+        content: "KUBECONFIG={{ kubeconfig_home }}/.kube/config\n"
+        mode: "0600"
+      become: true
+
+    - name: Wait for kube-apiserver to be ready
+      shell: |
+        export KUBECONFIG={{ kubeconfig_home }}/.kube/config
+        kubectl wait --for=condition=Ready --timeout=120s --all pods -n kube-system || true
+      register: wait_api
+      retries: 6
+      delay: 10
+      until: wait_api.rc == 0
+
+    - name: Apply Calico network plugin (from cloned repo)
+      shell: |
+        export KUBECONFIG={{ kubeconfig_home }}/.kube/config
+        kubectl apply -f {{ repo_dir }}/calico.yaml
+      args:
+        chdir: "{{ repo_dir }}"
+      register: apply_calico
+      failed_when: apply_calico.rc != 0
+
+    - name: Wait for Calico daemonset rollout
+      shell: |
+        export KUBECONFIG={{ kubeconfig_home }}/.kube/config
+        kubectl -n kube-system rollout status daemonset/calico-node --timeout=300s || true
+      register: calico_rollout
+      retries: 20
+      delay: 15
+      until: calico_rollout.rc == 0
+
+    - name: Create worker join command (explicit) as fallback using token
+      shell: kubeadm token create --print-join-command
+      register: worker_join_cmd_fallback
+      changed_when: false
+      failed_when: worker_join_cmd_fallback.rc != 0
+      when: worker_join_cmd == ''
+
+    - name: Ensure worker_join_cmd fact exists (fallback)
+      set_fact:
+        worker_join_cmd: "{{ worker_join_cmd_fallback.stdout }}"
+      when: worker_join_cmd == ''
+
+    - name: Ensure cp_join_cmd captured (if not captured, create control-plane join command using token + cert key)
+      shell: |
+        # get a token-join base
+        token_join=$(kubeadm token create --print-join-command)
+        # create a certificate key
+        cert_key=$(kubeadm init phase upload-certs --upload-certs 2>/dev/null | awk '/certificate key/ {print $NF}' || true)
+        if [ -z "$cert_key" ]; then
+          # fallback: try to find cert key in kubeadm init output
+          cert_key=$(echo "{{ kubeadm_init.stdout }}" | grep -oP '(?<=--certificate-key )[0-9a-fA-F]+' | head -n1)
+        fi
+        if [ -n "$cert_key" ]; then
+          echo "$token_join --control-plane --certificate-key $cert_key"
+        else
+          echo "$token_join --control-plane"
+        fi
+      register: cp_join_cmd_gen
+      changed_when: false
+      when: cp_join_cmd == ''
+
+    - name: Set cp_join_cmd fact from generated
+      set_fact:
+        cp_join_cmd: "{{ cp_join_cmd_gen.stdout }}"
+      when: cp_join_cmd == ''
+
+    - name: Show detected join commands (debug)
+      debug:
+        msg:
+          - "control-plane join command: {{ cp_join_cmd }}"
+          - "worker join command: {{ worker_join_cmd }}"
+
+# Join other control-plane nodes
+- name: Join other control-plane nodes
+  hosts: CP2, CP3 # all control_plane except the first
+  become: true
+  vars:
+    repo_dir: "{{ ansible_env.HOME }}/cka"
+  tasks:
+    - name: Wait for CP1 to be ready (simple ping)
+      wait_for:
+        host: "{{ groups['control_plane'][0] }}"
+        port: 6443
+        timeout: 300
+
+    - name: Run control-plane join command on CP (as root)
+      shell: "{{ hostvars[ groups['control_plane'][0] ]['cp_join_cmd'] }}"
+      register: join_cp
+      failed_when: join_cp.rc != 0 and "'already a member of the cluster' not in join_cp.stderr.lower()"
+
+    - name: Copy admin.conf to local kube config for new CP
+      copy:
+        src: /etc/kubernetes/admin.conf
+        dest: "{{ ansible_env.HOME }}/.kube/config"
+        mode: "0600"
+      ignore_errors: true
+
+# Join workers
+- name: Join worker nodes
+  hosts: workers
+  become: true
+  vars:
+    repo_dir: "{{ ansible_env.HOME }}/cka"
+  tasks:
+    - name: Wait for API server on CP1 to be reachable
+      wait_for:
+        host: "{{ groups['CP1'] }}"
+        port: 6443
+        timeout: 300
+
+    - name: Run worker join command
+      shell: "{{ hostvars['CP1']['worker_join_cmd'] }}"
+      register: join_worker
+      failed_when: join_worker.rc != 0 and "'already a member of the cluster' not in join_worker.stderr.lower()"
+
+    - name: "Clean: remove cloned repo if you want (commented)"
+      debug:
+        msg: "Worker joined (or already a member)."
+
+      # - name: Remove repo (optional)
+      #   file:
+      #     path: "{{ repo_dir }}"
+      #     state: absent

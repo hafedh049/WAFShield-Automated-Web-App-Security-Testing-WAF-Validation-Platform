@@ -1,56 +1,50 @@
 [
     {
-        "name": "Control-Plane",
-        "path": "D:/Virtual Machines/Control-Plane\\Control-Plane.vmx",
+        "name": "Bastion",
+        "path": "D:/Virtual Machines/Bastion\\Bastion.vmx",
+        "ip": "192.168.74.142",
+        "state": "start"
+    },
+    {
+        "name": "CP1",
+        "path": "D:/Virtual Machines/CP1\\CP1.vmx",
+        "ip": "192.168.74.144",
+        "state": "start"
+    },
+    {
+        "name": "CP2",
+        "path": "D:/Virtual Machines/CP2\\CP2.vmx",
         "ip": "192.168.74.146",
         "state": "start"
     },
     {
-        "name": "ELB-I",
-        "path": "D:/Virtual Machines/ELB-I\\ELB-I.vmx",
+        "name": "CP3",
+        "path": "D:/Virtual Machines/CP3\\CP3.vmx",
         "ip": "192.168.74.147",
         "state": "start"
     },
     {
-        "name": "ELB-II",
-        "path": "D:/Virtual Machines/ELB-II\\ELB-II.vmx",
+        "name": "W1",
+        "path": "D:/Virtual Machines/W1\\W1.vmx",
         "ip": "192.168.74.148",
         "state": "start"
     },
     {
-        "name": "WAF-I",
-        "path": "D:/Virtual Machines/WAF-I\\WAF-I.vmx",
-        "ip": "192.168.74.149",
+        "name": "W2",
+        "path": "D:/Virtual Machines/W2\\W2.vmx",
+        "ip": "192.168.74.155",
         "state": "start"
     },
     {
-        "name": "WAF-II",
-        "path": "D:/Virtual Machines/WAF-II\\WAF-II.vmx",
-        "ip": "192.168.74.150",
+        "name": "W3",
+        "path": "D:/Virtual Machines/W3\\W3.vmx",
+        "ip": "192.168.74.156",
         "state": "start"
     },
     {
-        "name": "ILB-I",
-        "path": "D:/Virtual Machines/ILB-I\\ILB-I.vmx",
-        "ip": "192.168.74.151",
-        "state": "start"
-    },
-    {
-        "name": "SRV-I",
-        "path": "D:/Virtual Machines/SRV-I\\SRV-I.vmx",
-        "ip": "192.168.74.152",
-        "state": "start"
-    },
-    {
-        "name": "SRV-II",
-        "path": "D:/Virtual Machines/SRV-II\\SRV-II.vmx",
-        "ip": "192.168.74.153",
-        "state": "start"
-    },
-    {
-        "name": "Bastion",
-        "path": "D:/Virtual Machines/Bastion\\Bastion.vmx",
-        "ip": "192.168.74.154",
+        "name": "W4",
+        "path": "D:/Virtual Machines/W4\\W4.vmx",
+        "ip": "192.168.74.157",
         "state": "start"
     }
 ]

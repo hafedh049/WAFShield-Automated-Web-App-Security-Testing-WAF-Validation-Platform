@@ -1,16 +1,9 @@
 [
   {
-    "deletion": "self-signed-cert-deletion.yaml",
-    "installation": "self-signed-cert-installation.yaml",
-    "name": "Self Signed Certification",
-    "execute_deletion": true,
-    "execute_installation": true
-  },
-  {
-    "deletion": "haproxy-deletion.yaml",
-    "installation": "haproxy-installation.yaml",
-    "name": "Ha-Proxy",
-    "execute_deletion": true,
-    "execute_installation": true
+    "deletion": "kubernetes-deletion.yaml",
+    "installation": "kubernetes-installation.yaml",
+    "name": "Kubernetes Cluster",
+    "execute_deletion": false,
+    "execute_installation": false
   }
 ]

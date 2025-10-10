@@ -1,49 +1,49 @@
 [
     {
-        "name": "Bastion",
-        "path": "D:/Virtual Machines/Bastion\\Bastion.vmx",
+        "name": "Dragon",
+        "path": "D:/Virtual Machines/Dragon/Dragon.vmx",
         "ip": "192.168.74.142",
         "state": "start"
     },
     {
         "name": "CP1",
-        "path": "D:/Virtual Machines/CP1\\CP1.vmx",
+        "path": "D:/Virtual Machines/CP1/CP1.vmx",
         "ip": "192.168.74.144",
         "state": "start"
     },
     {
         "name": "CP2",
-        "path": "D:/Virtual Machines/CP2\\CP2.vmx",
+        "path": "D:/Virtual Machines/CP2/CP2.vmx",
         "ip": "192.168.74.146",
         "state": "start"
     },
     {
         "name": "CP3",
-        "path": "D:/Virtual Machines/CP3\\CP3.vmx",
+        "path": "D:/Virtual Machines/CP3/CP3.vmx",
         "ip": "192.168.74.147",
         "state": "start"
     },
     {
         "name": "W1",
-        "path": "D:/Virtual Machines/W1\\W1.vmx",
+        "path": "D:/Virtual Machines/W1/W1.vmx",
         "ip": "192.168.74.148",
         "state": "start"
     },
     {
         "name": "W2",
-        "path": "D:/Virtual Machines/W2\\W2.vmx",
+        "path": "D:/Virtual Machines/W2/W2.vmx",
         "ip": "192.168.74.155",
         "state": "start"
     },
     {
         "name": "W3",
-        "path": "D:/Virtual Machines/W3\\W3.vmx",
+        "path": "D:/Virtual Machines/W3/W3.vmx",
         "ip": "192.168.74.156",
         "state": "start"
     },
     {
         "name": "W4",
-        "path": "D:/Virtual Machines/W4\\W4.vmx",
+        "path": "D:/Virtual Machines/W4/W4.vmx",
         "ip": "192.168.74.157",
         "state": "start"
     }

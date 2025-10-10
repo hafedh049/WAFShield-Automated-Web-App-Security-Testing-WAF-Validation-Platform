@@ -1,82 +1,81 @@
 ---
-- name: Cleanup K3s HA cluster (RHEL 10)
+# Delete / Reset K3s Cluster (Full Cleanup)
+# Run against: CP1, CP2, CP3, W1, W2, W3, W4
+
+- name: Cleanup & Remove K3s from all nodes
   hosts: all
   become: true
-  vars:
-    cp_nodes:
-      - CP1
-      - CP2
-      - CP3
-    agent_nodes:
-      - W1
-      - W2
-      - W3
-      - W4
-    k3s_dirs:
-      - /etc/rancher/k3s
-      - /var/lib/rancher/k3s
-      - /var/lib/kubelet
-      - /var/lib/cni
-      - /run/k3s
-      - /usr/local/bin/k3s
-    k3s_service: k3s
-
   tasks:
-    # -----------------
-    # Stop K3s services
-    # -----------------
-    - name: Stop K3s service
-      ansible.builtin.systemd:
-        name: "{{ k3s_service }}"
+    # 1️⃣ Stop any K3s services
+    - name: Stop K3s server service if exists
+      service:
+        name: k3s
         state: stopped
       ignore_errors: true
 
-    - name: Disable K3s service
-      ansible.builtin.systemd:
-        name: "{{ k3s_service }}"
-        enabled: no
+    - name: Stop K3s agent service if exists
+      service:
+        name: k3s-agent
+        state: stopped
       ignore_errors: true
 
-    # -----------------
-    # Remove K3s binaries and data directories
-    # -----------------
-    - name: Remove K3s directories and files
-      ansible.builtin.file:
+    # 2️⃣ Kill running k3s processes (defensive)
+    - name: Kill leftover k3s processes
+      shell: |
+        pkill -f k3s || true
+      ignore_errors: true
+
+    # 3️⃣ Remove K3s binary
+    - name: Remove K3s binary
+      file:
+        path: /usr/local/bin/k3s
+        state: absent
+      ignore_errors: true
+
+    # 4️⃣ Remove K3s installed directories
+    - name: Remove K3s data directories
+      file:
         path: "{{ item }}"
         state: absent
-      loop: "{{ k3s_dirs }}"
-
-    # -----------------
-    # Remove cluster token file (if exists)
-    # -----------------
-    - name: Remove temporary cluster token
-      ansible.builtin.file:
-        path: /tmp/k3s_cluster_token
-        state: absent
-
-    - name: Remove per-node token files (agents and cp joins)
-      ansible.builtin.file:
-        path: "/tmp/k3s_token_{{ inventory_hostname }}"
-        state: absent
-
-    # -----------------
-    # Remove kubectl alias from .bashrc
-    # -----------------
-    - name: Remove kubectl alias
-      ansible.builtin.lineinfile:
-        path: /root/.bashrc
-        line: "alias k='kubectl'"
-        state: absent
-
-    - name: Reload bashrc
-      ansible.builtin.shell: source /root/.bashrc
+      loop:
+        - /etc/rancher
+        - /var/lib/rancher
+        - /var/lib/kubelet
+        - /etc/k3s
       ignore_errors: true
 
-    # -----------------
-    # Disable firewalld if desired (uncomment to remove)
-    # -----------------
-    - name: Stop and disable firewalld
-      ansible.builtin.systemd:
-        name: firewalld
-        state: stopped
-        enabled: no
+    # 5️⃣ Flush IPTables rules (recommended after K3s)
+    - name: Flush IPTables rules (optional but clean)
+      shell: |
+        iptables -F || true
+        iptables -t nat -F || true
+      ignore_errors: true
+
+    # 6️⃣ Cleanup leftover configs
+    - name: Remove K3s service files
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/systemd/system/k3s.service
+        - /etc/systemd/system/k3s-agent.service
+      ignore_errors: true
+
+    # 7️⃣ Reload systemd daemon
+    - name: Reload systemd daemon
+      command: systemctl daemon-reload
+
+    # 8️⃣ Final clean verify
+    - name: Verify removal
+      shell: |
+        if command -v k3s >/dev/null 2>&1; then
+          echo "K3s still exists!"
+          exit 1
+        else
+          echo "K3s removed successfully."
+        fi
+      register: verify_result
+      changed_when: false
+
+    - debug:
+        msg: "{{ verify_result.stdout }}"

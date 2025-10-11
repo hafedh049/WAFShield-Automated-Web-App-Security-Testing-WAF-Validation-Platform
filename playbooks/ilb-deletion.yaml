@@ -1,0 +1,65 @@
+---
+# ILBs HA: Cleanup HAProxy + Keepalived + VIP
+# Hosts: ILB1, ILB2
+# Run as root
+
+- name: Cleanup ILB HAProxy + Keepalived
+  hosts:
+    - ILB1
+    - ILB2
+  gather_facts: true
+
+  tasks:
+    - name: Stop HAProxy service
+      service:
+        name: haproxy
+        state: stopped
+        enabled: no
+
+    - name: Stop Keepalived service
+      service:
+        name: keepalived
+        state: stopped
+        enabled: no
+
+    - name: Remove HAProxy config
+      file:
+        path: /etc/haproxy/haproxy.cfg
+        state: absent
+
+    - name: Remove HAProxy default certs if exist
+      file:
+        path: /etc/haproxy/certs
+        state: absent
+        recurse: true
+
+    - name: Remove Keepalived config
+      file:
+        path: /etc/keepalived/keepalived.conf
+        state: absent
+
+    - name: Remove VIP from interface (if exists)
+      shell: |
+        ip addr show | grep -q "{{ chosen_vip }}"
+        if [ $? -eq 0 ]; then
+          ip addr del {{ chosen_vip }}/24 dev {{ interface }}
+        fi
+      ignore_errors: true
+
+    - name: Reload firewalld to remove rules (optional)
+      firewalld:
+        port: 80/tcp
+        state: disabled
+        permanent: true
+      ignore_errors: true
+
+    - name: Reload firewalld
+      command: firewall-cmd --reload
+      ignore_errors: true
+
+    - name: Uninstall HAProxy and Keepalived packages (optional)
+      yum:
+        name:
+          - haproxy
+          - keepalived
+        state: absent

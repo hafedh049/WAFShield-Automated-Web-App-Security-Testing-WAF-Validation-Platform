@@ -1,0 +1,195 @@
+---
+# HA WAF: Dockerized Nginx + ModSecurity + VIP
+# Hosts: WAF1, WAF2, ILB1, ILB2
+# Run as root
+
+- name: Configure HA WAF with Dockerized Nginx + ModSecurity and VIP
+  hosts:
+    - WAF1
+    - WAF2
+    - ILB1
+    - ILB2
+  gather_facts: true
+
+  vars:
+    waf_primary: "WAF1"
+    waf_standby: "WAF2"
+    interface: "{{ INTERFACE }}"
+    vrouter_id: "{{ VROUTER_ID }}"
+    auth_pass: "{{ AUTH_PASS }}"
+
+    vip_scan_start: 1
+    vip_scan_end: 254
+    network_prefix: "192.168.74"
+
+    nginx_conf_dir: /etc/nginx
+
+  pre_tasks:
+    - name: Register System
+      command: subscription-manager register --force --username={{ REDHAT_USERNAME }} --password={{ REDHAT_PASSWORD }}
+
+    - name: Set WAF role facts
+      set_fact:
+        waf_role: "{{ 'primary' if inventory_hostname == waf_primary else 'backup' }}"
+        waf_priority: "{{ 150 if inventory_hostname == waf_primary else 100 }}"
+      when: inventory_hostname in ['WAF1','WAF2']
+
+    - name: Find a free VIP in 192.168.74.1-254 on primary WAF
+      delegate_to: "{{ waf_primary }}"
+      run_once: true
+      shell: |
+        set -euo pipefail
+        for i in $(seq {{ vip_scan_start }} {{ vip_scan_end }}); do
+          IP="{{ network_prefix }}.$i"
+          if ip -4 addr show | grep -q "$IP/"; then continue; fi
+          if ping -c1 -W1 -n "$IP" >/dev/null 2>&1; then continue; fi
+          if arp -n | awk '{print $1}' | grep -qx "$IP"; then continue; fi
+          echo "$IP"
+          exit 0
+        done
+        exit 1
+      register: vip_candidate
+      ignore_errors: true
+      when: inventory_hostname in ['WAF1','WAF2']
+
+    - name: Set chosen VIP (fallback .210)
+      run_once: true
+      delegate_to: localhost
+      set_fact:
+        vip: "{{ (hostvars[waf_primary].vip_candidate.stdout | default('')) | trim() or network_prefix + '.210' }}"
+      when: inventory_hostname in ['WAF1','WAF2']
+
+    - name: Show chosen VIP
+      debug:
+        msg: "Chosen VIP = {{ vip }}"
+      run_once: true
+      when: inventory_hostname in ['WAF1','WAF2']
+
+  tasks:
+    - name: Ensure firewalld is running
+      service:
+        name: firewalld
+        state: started
+        enabled: yes
+      when: inventory_hostname in ['WAF1','WAF2']
+
+    - name: Open HTTP port 80 (firewalld)
+      firewalld:
+        port: 80/tcp
+        permanent: yes
+        state: enabled
+        immediate: yes
+      when: inventory_hostname in ['WAF1','WAF2']
+
+    - name: Reload firewalld to apply changes
+      command: firewall-cmd --reload
+      when: inventory_hostname in ['WAF1','WAF2']
+
+    - name: Enable dnf-plugins-core
+      ansible.builtin.dnf:
+        name: dnf-plugins-core
+        state: present
+      when: inventory_hostname in ['WAF1','WAF2']
+
+    - name: Add Docker CE repository
+      ansible.builtin.command:
+        cmd: >
+          dnf config-manager --add-repo
+          https://download.docker.com/linux/rhel/docker-ce.repo
+      args:
+        creates: /etc/yum.repos.d/docker-ce.repo
+      when: inventory_hostname in ['WAF1','WAF2']
+
+    - name: Install Docker Engine and related packages
+      ansible.builtin.dnf:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
+        state: present
+      when: inventory_hostname in ['WAF1','WAF2']
+
+    - name: Enable and start Docker service
+      ansible.builtin.service:
+        name: docker
+        state: started
+        enabled: yes
+      when: inventory_hostname in ['WAF1','WAF2']
+
+    - name: Add current user to docker group
+      ansible.builtin.user:
+        name: "{{ ansible_user | default('root') }}"
+        groups: docker
+        append: yes
+      when: inventory_hostname in ['WAF1','WAF2']
+
+    - name: Enable and start Docker service
+      service:
+        name: docker
+        state: started
+        enabled: yes
+      when: inventory_hostname in ['WAF1','WAF2']
+
+    - name: Run Dockerized Nginx + ModSecurity container (default CRS)
+      docker_container:
+        name: waf
+        image: owasp/modsecurity-crs:nginx
+        state: started
+        restart_policy: always
+        ports:
+          - "80:8080"
+      when: inventory_hostname in ['WAF1','WAF2']
+
+    - name: Install keepalived
+      yum:
+        name: keepalived
+        state: present
+      when: inventory_hostname in ['WAF1','WAF2']
+
+    - name: Ensure keepalived directory exists
+      file:
+        path: /etc/keepalived
+        state: directory
+        owner: root
+        group: root
+        mode: 0755
+      when: inventory_hostname in ['WAF1','WAF2']
+
+    - name: Create keepalived config with VIP
+      copy:
+        dest: /etc/keepalived/keepalived.conf
+        mode: "0644"
+        content: |
+          vrrp_script chk_nginx {
+              script "docker ps | grep waf"
+              interval 2
+              weight 2
+          }
+
+          vrrp_instance VI_1 {
+              state {{ 'MASTER' if inventory_hostname == waf_primary else 'BACKUP' }}
+              interface {{ interface }}
+              virtual_router_id {{ vrouter_id }}
+              priority {{ 150 if inventory_hostname == waf_primary else 100 }}
+              advert_int 1
+              authentication {
+                  auth_type PASS
+                  auth_pass {{ auth_pass }}
+              }
+              track_script {
+                  chk_nginx
+              }
+              virtual_ipaddress {
+                  {{ vip }}
+              }
+          }
+      when: inventory_hostname in ['WAF1','WAF2']
+
+    - name: Ensure keepalived is enabled and started
+      service:
+        name: keepalived
+        state: started
+        enabled: yes
+      when: inventory_hostname in ['WAF1','WAF2']

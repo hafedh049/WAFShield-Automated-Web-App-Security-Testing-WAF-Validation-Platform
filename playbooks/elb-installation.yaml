@@ -1,0 +1,301 @@
+---
+# ELBs HA: HAProxy + Keepalived + Self-Signed certs (HTTPS + VIP)
+# Hosts: ELB1, ELB2
+# Run as root
+
+- name: Configure HAProxy + Keepalived + Self-Signed HTTPS on ELBs
+  hosts:
+    - ELB1
+    - ELB2
+  gather_facts: true
+
+  vars:
+    domain: "{{ DOMAIN }}"
+    interface: "{{ INTERFACE }}"
+    vrouter_id: "{{ VROUTER_ID }}"
+    auth_pass: "{{ AUTH_PASS }}"
+
+    vip_scan_start: 200
+    vip_scan_end: 254
+    network_prefix: "192.168.74"
+
+    haproxy_cert_dir: /etc/haproxy/certs
+    cert_pem_path: "{{ haproxy_cert_dir }}/{{ domain }}.pem"
+    cert_key_path: "{{ haproxy_cert_dir }}/{{ domain }}.key"
+    cert_crt_path: "{{ haproxy_cert_dir }}/{{ domain }}.crt"
+
+    waf_hosts:
+      - WAF1
+      - WAF2
+
+  pre_tasks:
+    - name: Register System
+      command: subscription-manager register --force --username={{ REDHAT_USERNAME }} --password={{ REDHAT_PASSWORD }}
+
+    - name: Resolve backend IPs from WAF hosts
+      set_fact:
+        backends: []
+      run_once: true
+
+    - name: Build backends list (WAF1, WAF2)
+      set_fact:
+        backends: "{{ backends + [ (hostvars[item].ansible_host | default(hostvars[item].ansible_default_ipv4.address)) ~ ':80' ] }}"
+      loop: "{{ waf_hosts }}"
+      run_once: true
+
+    - name: Set primary/standby ELB names (explicit)
+      set_fact:
+        elb_primary: "ELB1"
+        elb_standby: "ELB2"
+      run_once: true
+
+    - name: Find a free VIP in {{ network_prefix }}.200-{{ network_prefix }}.254 (run on primary)
+      delegate_to: "{{ elb_primary }}"
+      run_once: true
+      shell: |
+        set -euo pipefail
+        for i in $(seq {{ vip_scan_start }} {{ vip_scan_end }}); do
+          IP="{{ network_prefix }}.$i"
+          # skip if already assigned locally
+          if ip -4 addr show | grep -q "$IP/"; then continue; fi
+          # skip if pingable (likely used)
+          if ping -c1 -W1 -n "$IP" >/dev/null 2>&1; then continue; fi
+          # skip if in ARP table
+          if arp -n | awk '{print $1}' | grep -qx "$IP"; then continue; fi
+          echo "$IP"
+          exit 0
+        done
+        exit 1
+      register: vip_candidate
+      ignore_errors: true
+
+    - name: Compute chosen_vip (fallback .250) and make it available to all hosts
+      run_once: true
+      delegate_to: localhost
+      set_fact:
+        chosen_vip: "{{ (hostvars[elb_primary].vip_candidate.stdout | default('')) | trim() or (network_prefix + '.250') }}"
+
+    - name: Show chosen VIP (info)
+      debug:
+        msg: "Chosen VIP = {{ chosen_vip }}"
+      run_once: true
+
+    - name: Ensure firewalld is running (so port tasks succeed)
+      service:
+        name: firewalld
+        state: started
+        enabled: true
+
+    - name: Open HTTP port 80 (firewalld)
+      firewalld:
+        port: 80/tcp
+        permanent: yes
+        state: enabled
+        immediate: yes
+
+    - name: Open HTTPS port 443 (firewalld)
+      firewalld:
+        port: 443/tcp
+        permanent: yes
+        state: enabled
+        immediate: yes
+
+    - name: Reload firewalld to apply changes
+      command: firewall-cmd --reload
+
+    - name: Ensure HAProxy cert dir exists
+      file:
+        path: "{{ haproxy_cert_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Ensure /etc/hosts contains ELB hostnames (so they can reach each other by name)
+      lineinfile:
+        path: /etc/hosts
+        line: "{{ (hostvars[item].ansible_default_ipv4.address | default(hostvars[item].ansible_host)) }} {{ item | lower }}"
+        state: present
+      loop:
+        - ELB1
+        - ELB2
+
+  tasks:
+    - name: Install required packages (RHEL)
+      yum:
+        name:
+          - haproxy
+          - keepalived
+          - socat
+          - rsync
+          - python3
+          - openssl
+        state: present
+
+    # ------------------------
+    # Generate self-signed cert on PRIMARY (OpenSSL CLI)
+    # ------------------------
+    - name: Generate self-signed cert + key on primary (OpenSSL CLI)
+      when: inventory_hostname == elb_primary
+      block:
+        - name: Create cert dir (primary)
+          file:
+            path: "{{ haproxy_cert_dir }}"
+            state: directory
+            owner: root
+            group: root
+            mode: "0755"
+
+        - name: Generate private key (primary) if missing
+          shell: |
+            openssl genrsa -out "{{ cert_key_path }}" 2048
+          args:
+            creates: "{{ cert_key_path }}"
+
+        - name: Generate self-signed certificate (primary) if missing
+          shell: |
+            openssl req -new -x509 -key "{{ cert_key_path }}" -out "{{ cert_crt_path }}" -days 365 -subj "/CN={{ domain }}"
+          args:
+            creates: "{{ cert_crt_path }}"
+
+        - name: Combine cert + key into PEM for HAProxy (primary)
+          shell: |
+            cat "{{ cert_crt_path }}" "{{ cert_key_path }}" > "{{ cert_pem_path }}"
+            chmod 600 "{{ cert_pem_path }}"
+            chown root:root "{{ cert_pem_path }}"
+          args:
+            creates: "{{ cert_pem_path }}"
+
+    - name: Slurp combined PEM from primary into controller memory (run once)
+      run_once: true
+      delegate_to: "{{ elb_primary }}"
+      slurp:
+        src: "{{ cert_pem_path }}"
+      register: primary_pem
+      failed_when: false
+
+    - name: Write PEM to primary (ensure present) - when slurp found it
+      when:
+        - primary_pem is defined
+        - primary_pem.content is defined
+      delegate_to: "{{ elb_primary }}"
+      copy:
+        content: "{{ primary_pem.content | b64decode }}"
+        dest: "{{ cert_pem_path }}"
+        owner: root
+        group: root
+        mode: "0600"
+
+    - name: Write PEM to standby (write slurped content to ELB2)
+      when:
+        - primary_pem is defined
+        - primary_pem.content is defined
+      run_once: true
+      delegate_to: "{{ elb_standby }}"
+      copy:
+        content: "{{ primary_pem.content | b64decode }}"
+        dest: "{{ cert_pem_path }}"
+        owner: root
+        group: root
+        mode: "0600"
+
+    # ------------------------
+    # Build HAProxy config (HTTP -> HTTPS redirect, HTTPS termination)
+    # ------------------------
+    - name: Build HAProxy config with HTTP+HTTPS termination
+      copy:
+        dest: /etc/haproxy/haproxy.cfg
+        content: |
+          global
+              log /dev/log local0
+              log /dev/log local1 notice
+              daemon
+              user haproxy
+              group haproxy
+              tune.ssl.default-dh-param 2048
+
+          defaults
+              log global
+              mode http
+              option httplog
+              option dontlognull
+              timeout connect 5s
+              timeout client  50s
+              timeout server  50s
+
+          frontend http_front
+              bind *:80
+              mode http
+              redirect scheme https code 301 if !{ ssl_fc }
+
+          frontend https_front
+              bind *:443 ssl crt {{ cert_pem_path }}
+              mode http
+              option httplog
+              default_backend bk_app
+
+          backend bk_app
+              mode http
+              option httpchk GET /
+              balance roundrobin
+          {% for be in backends %}
+              server backend{{ loop.index }} {{ be }} check
+          {% endfor %}
+      notify: restart haproxy
+
+    - name: Ensure haproxy enabled (will be started by handler if config ok)
+      service:
+        name: haproxy
+        enabled: yes
+        state: started
+      # If the PEM is invalid or missing, haproxy may fail to start. That's expected and will show in the logs.
+
+    # ------------------------
+    # Keepalived config (VIP)
+    # ------------------------
+    - name: Create keepalived config with chosen VIP
+      copy:
+        dest: /etc/keepalived/keepalived.conf
+        mode: "0644"
+        content: |
+          vrrp_script chk_haproxy {
+              script "killall -0 haproxy"
+              interval 2
+              weight 2
+          }
+
+          vrrp_instance VI_1 {
+              state {{ 'MASTER' if inventory_hostname == elb_primary else 'BACKUP' }}
+              interface {{ interface }}
+              virtual_router_id {{ vrouter_id }}
+              priority {{ 150 if inventory_hostname == elb_primary else 100 }}
+              advert_int 1
+              authentication {
+                  auth_type PASS
+                  auth_pass {{ auth_pass }}
+              }
+              track_script {
+                  chk_haproxy
+              }
+              virtual_ipaddress {
+                  {{ chosen_vip }}
+              }
+          }
+      notify: restart keepalived
+
+    - name: Ensure keepalived enabled and started
+      service:
+        name: keepalived
+        state: started
+        enabled: yes
+
+  handlers:
+    - name: restart haproxy
+      service:
+        name: haproxy
+        state: restarted
+
+    - name: restart keepalived
+      service:
+        name: keepalived
+        state: restarted

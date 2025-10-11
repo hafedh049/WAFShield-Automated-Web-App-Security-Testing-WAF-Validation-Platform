@@ -2,7 +2,7 @@ import os
 import json
 import subprocess
 import paramiko
-from dotenv import load_dotenv
+from dotenv import load_dotenv, dotenv_values
 import time
 from pathlib import Path
 import logging
@@ -121,7 +121,7 @@ def configure_ansible_master():
 
     commands = [
         "dnf install -y ansible ansible-core python3-pip sshpass tree jq",
-        "ansible-galaxy collection install ansible.posix community.general community.crypto",
+        "ansible-galaxy collection install ansible.posix community.general community.crypto community.docker",
         "echo '[defaults]' | tee /root/ansible.cfg",
         "echo 'forks = 20' | tee -a /root/ansible.cfg",
         "echo 'inventory = /root/inventory' | tee -a /root/ansible.cfg",
@@ -234,16 +234,22 @@ def execute_playbooks():
     except IOError:
         pass
 
+    pairs = dotenv_values(".env")
+
     for item in local_playbooks_dir.iterdir():
         if item.is_file() and item.suffix in {".yml", ".yaml"}:
             logger.info(f"Uploading {item.name} to Dragon Master...")
             # There is "{{ CP1-IP }}" in the file that need to be replace with actual IP
-            with open(item, "r") as f:
+            with open(item, "r", encoding="utf-8") as f:
                 file_data = f.read()
                 file_data = file_data.replace(
                     "{{ CP1_IP }}",
                     next((vm["ip"] for vm in vms if vm["name"] == "CP1")),
                 )
+                for key in pairs:
+                    file_data = file_data.replace(
+                        "{{ " + f"{key}" + " }}", f"{pairs[key]}"
+                    )
             with sftp.file(f"{remote_playbooks_dir}/{item.name}", "w") as remote_file:
                 remote_file.write(file_data)
             sftp.chmod(f"{remote_playbooks_dir}/{item.name}", 0o644)
@@ -286,9 +292,9 @@ def execute_playbooks():
 
 
 if __name__ == "__main__":
-    create_vms()
-    boot_all_vms()
-    configure_ansible_master()
+    # create_vms()
+    # boot_all_vms()
+    # configure_ansible_master()
     execute_playbooks()
     # stop_all_vms()
     ...

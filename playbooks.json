@@ -5,5 +5,26 @@
     "name": "Kubernetes Cluster",
     "execute_deletion": false,
     "execute_installation": false
+  },
+  {
+    "deletion": "elb-deletion.yaml",
+    "installation": "elb-installation.yaml",
+    "name": "External Load Blancers",
+    "execute_deletion": false,
+    "execute_installation": false
+  },
+  {
+    "deletion": "waf-deletion.yaml",
+    "installation": "waf-installation.yaml",
+    "name": "WAF (NginX + ModSecurity)",
+    "execute_deletion": false,
+    "execute_installation": false
+  },
+  {
+    "deletion": "ilb-deletion.yaml",
+    "installation": "ilb-installation.yaml",
+    "name": "Internal Load Balencers",
+    "execute_deletion": false,
+    "execute_installation": false
   }
 ]

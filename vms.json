@@ -2,7 +2,7 @@
     {
         "name": "Dragon",
         "path": "D:/Virtual Machines/Dragon/Dragon.vmx",
-        "ip": "192.168.74.142",
+        "ip": "192.168.74.161",
         "state": "start"
     },
     {
@@ -32,7 +32,7 @@
     {
         "name": "W2",
         "path": "D:/Virtual Machines/W2/W2.vmx",
-        "ip": "192.168.74.155",
+        "ip": "192.168.74.162",
         "state": "start"
     },
     {
@@ -45,6 +45,42 @@
         "name": "W4",
         "path": "D:/Virtual Machines/W4/W4.vmx",
         "ip": "192.168.74.157",
+        "state": "start"
+    },
+    {
+        "name": "ELB1",
+        "path": "D:/Virtual Machines/ELB1/ELB1.vmx",
+        "ip": "192.168.74.142",
+        "state": "start"
+    },
+    {
+        "name": "ELB2",
+        "path": "D:/Virtual Machines/ELB2/ELB2.vmx",
+        "ip": "192.168.74.154",
+        "state": "start"
+    },
+    {
+        "name": "WAF1",
+        "path": "D:/Virtual Machines/WAF1/WAF1.vmx",
+        "ip": "192.168.74.155",
+        "state": "start"
+    },
+    {
+        "name": "WAF2",
+        "path": "D:/Virtual Machines/WAF2/WAF2.vmx",
+        "ip": "192.168.74.158",
+        "state": "start"
+    },
+    {
+        "name": "ILB1",
+        "path": "D:/Virtual Machines/ILB1/ILB1.vmx",
+        "ip": "192.168.74.159",
+        "state": "start"
+    },
+    {
+        "name": "ILB2",
+        "path": "D:/Virtual Machines/ILB2/ILB2.vmx",
+        "ip": "192.168.74.160",
         "state": "start"
     }
 ]

@@ -1,0 +1,189 @@
+---
+# ILBs HA: HAProxy + Keepalived (HTTP only + VIP)
+# Hosts: ILB1, ILB2
+# Run as root
+
+- name: Configure HAProxy + Keepalived on ILBs (HTTP)
+  hosts:
+    - ILB1
+    - ILB2
+  gather_facts: true
+
+  vars:
+    interface: "{{ INTERFACE }}"
+    vrouter_id: "{{ VROUTER_ID }}"
+    auth_pass: "{{ AUTH_PASS }}"
+
+    vip_scan_start: 200
+    vip_scan_end: 254
+    network_prefix: "192.168.74"
+
+    k8s_hosts:
+      - CP1
+      - CP2
+      - CP3
+
+  pre_tasks:
+    - name: Register System
+      command: subscription-manager register --force --username={{ REDHAT_USERNAME }} --password={{ REDHAT_PASSWORD }}
+
+    - name: Resolve backend IPs from K8s control plane
+      set_fact:
+        backends: []
+      run_once: true
+
+    - name: Build backends list (CP1, CP2, CP3)
+      set_fact:
+        backends: "{{ backends + [ (hostvars[item].ansible_host | default(hostvars[item].ansible_default_ipv4.address)) ~ ':80' ] }}"
+      loop: "{{ k8s_hosts }}"
+      run_once: true
+
+    - name: Set primary/standby ILB names (explicit)
+      set_fact:
+        ilb_primary: "ILB1"
+        ilb_standby: "ILB2"
+      run_once: true
+
+    - name: Find a free VIP in {{ network_prefix }}.200-{{ network_prefix }}.254 (run on primary)
+      delegate_to: "{{ ilb_primary }}"
+      run_once: true
+      shell: |
+        set -euo pipefail
+        for i in $(seq {{ vip_scan_start }} {{ vip_scan_end }}); do
+          IP="{{ network_prefix }}.$i"
+          if ip -4 addr show | grep -q "$IP/"; then continue; fi
+          if ping -c1 -W1 -n "$IP" >/dev/null 2>&1; then continue; fi
+          if arp -n | awk '{print $1}' | grep -qx "$IP"; then continue; fi
+          echo "$IP"
+          exit 0
+        done
+        exit 1
+      register: vip_candidate
+      ignore_errors: true
+
+    - name: Compute chosen_vip (fallback .250) and make it available to all hosts
+      run_once: true
+      delegate_to: localhost
+      set_fact:
+        chosen_vip: "{{ (hostvars[ilb_primary].vip_candidate.stdout | default('')) | trim() or (network_prefix + '.250') }}"
+
+    - name: Show chosen VIP (info)
+      debug:
+        msg: "Chosen VIP = {{ chosen_vip }}"
+      run_once: true
+
+    - name: Ensure firewalld is running (so port tasks succeed)
+      service:
+        name: firewalld
+        state: started
+        enabled: true
+
+    - name: Open HTTP port 80 (firewalld)
+      firewalld:
+        port: 80/tcp
+        permanent: yes
+        state: enabled
+        immediate: yes
+
+    - name: Reload firewalld to apply changes
+      command: firewall-cmd --reload
+
+  tasks:
+    - name: Install required packages (RHEL)
+      yum:
+        name:
+          - haproxy
+          - keepalived
+        state: present
+
+    # ------------------------
+    # Build HAProxy config (HTTP only)
+    # ------------------------
+    - name: Build HAProxy config (HTTP only, round-robin to CP1–CP3)
+      copy:
+        dest: /etc/haproxy/haproxy.cfg
+        content: |
+          global
+              log /dev/log local0
+              log /dev/log local1 notice
+              daemon
+              user haproxy
+              group haproxy
+
+          defaults
+              log global
+              mode http
+              option httplog
+              option dontlognull
+              timeout connect 5s
+              timeout client  50s
+              timeout server  50s
+
+          frontend http_front
+              bind *:80
+              mode http
+              default_backend bk_k8s
+
+          backend bk_k8s
+              mode http
+              balance roundrobin
+          {% for be in backends %}
+              server k8s{{ loop.index }} {{ be }} check
+          {% endfor %}
+      notify: restart haproxy
+
+    - name: Ensure haproxy enabled
+      service:
+        name: haproxy
+        enabled: yes
+        state: started
+
+    # ------------------------
+    # Keepalived config (VIP)
+    # ------------------------
+    - name: Create keepalived config with chosen VIP
+      copy:
+        dest: /etc/keepalived/keepalived.conf
+        mode: "0644"
+        content: |
+          vrrp_script chk_haproxy {
+              script "killall -0 haproxy"
+              interval 2
+              weight 2
+          }
+
+          vrrp_instance VI_1 {
+              state {{ 'MASTER' if inventory_hostname == ilb_primary else 'BACKUP' }}
+              interface {{ interface }}
+              virtual_router_id {{ vrouter_id }}
+              priority {{ 150 if inventory_hostname == ilb_primary else 100 }}
+              advert_int 1
+              authentication {
+                  auth_type PASS
+                  auth_pass {{ auth_pass }}
+              }
+              track_script {
+                  chk_haproxy
+              }
+              virtual_ipaddress {
+                  {{ chosen_vip }}
+              }
+          }
+      notify: restart keepalived
+
+    - name: Ensure keepalived enabled and started
+      service:
+        name: keepalived
+        state: started
+        enabled: yes
+
+  handlers:
+    - name: restart haproxy
+      service:
+        name: haproxy
+        state: restarted
+
+    - name: restart keepalived
+      service:
+        name: keepalived
+        state: restarted

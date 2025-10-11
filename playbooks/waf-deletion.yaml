@@ -1,0 +1,76 @@
+---
+# Cleanup HA WAF: Dockerized Nginx + ModSecurity + VIP
+# Hosts: WAF1, WAF2
+# Run as root
+
+- name: Cleanup Dockerized WAF + Keepalived + VIP
+  hosts:
+    - WAF1
+    - WAF2
+  gather_facts: true
+
+  tasks:
+    - name: Stop and remove WAF Docker container
+      docker_container:
+        name: waf
+        state: absent
+        force_kill: true
+
+    - name: Stop Docker service
+      service:
+        name: docker
+        state: stopped
+        enabled: no
+
+    - name: Remove Docker packages (optional)
+      yum:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
+        state: absent
+
+    - name: Stop Keepalived service
+      service:
+        name: keepalived
+        state: stopped
+        enabled: no
+
+    - name: Remove Keepalived config
+      file:
+        path: /etc/keepalived/keepalived.conf
+        state: absent
+
+    - name: Remove Keepalived directory (optional)
+      file:
+        path: /etc/keepalived
+        state: absent
+        recurse: true
+
+    - name: Remove VIP from interface (if exists)
+      shell: |
+        ip addr show | grep -q "{{ vip }}"
+        if [ $? -eq 0 ]; then
+          ip addr del {{ vip }}/24 dev {{ interface }}
+        fi
+      ignore_errors: true
+
+    - name: Disable HTTP port in firewalld (optional cleanup)
+      firewalld:
+        port: 80/tcp
+        state: disabled
+        permanent: true
+      ignore_errors: true
+
+    - name: Reload firewalld
+      command: firewall-cmd --reload
+      ignore_errors: true
+
+    - name: Remove HA WAF host entries from /etc/hosts (if any)
+      lineinfile:
+        path: /etc/hosts
+        regexp: "^.*WAF[12]$"
+        state: absent
+      ignore_errors: true

@@ -293,7 +293,7 @@ def execute_playbooks():
 
 if __name__ == "__main__":
     # create_vms()
-    # boot_all_vms()
+    boot_all_vms()
     # configure_ansible_master()
     execute_playbooks()
     # stop_all_vms()
